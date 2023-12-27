@@ -8,6 +8,7 @@ MobSF and Django settings
 import imp
 import logging
 import os
+from decouple import config
 
 from mobsf.MobSF.init import (
     first_run,
@@ -33,7 +34,7 @@ DWD_DIR = os.path.join(MobSF_HOME, 'downloads/')
 # Screenshot Directory
 SCREEN_DIR = os.path.join(MobSF_HOME, 'downloads/screen/')
 # Upload Directory
-UPLD_DIR = os.path.join(MobSF_HOME, 'uploads/')
+UPLD_DIR = os.path.join(config("MOSBF_APP_UPLOAD_DIR"), 'uploads/')
 # Database Directory
 DB_DIR = os.path.join(MobSF_HOME, 'db.sqlite3')
 # Signatures used by modules
