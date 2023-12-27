@@ -64,7 +64,7 @@ RUN groupadd -g 9901 $MOBSF_USER
 RUN adduser $MOBSF_USER --shell /bin/false -u 9901 --ingroup $MOBSF_USER --gecos "" --disabled-password
 
 COPY poetry.lock pyproject.toml ./
-RUN python3 -m pip install --upgrade --no-cache-dir pip poetry==${POETRY_VERSION} && \
+RUN python3 -m pip install python-decouple --upgrade --no-cache-dir pip poetry==${POETRY_VERSION} && \
     poetry config virtualenvs.create false && \
     poetry install --only main --no-root --no-interaction --no-ansi
 
