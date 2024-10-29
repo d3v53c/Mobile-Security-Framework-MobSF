@@ -5,7 +5,6 @@ Django settings for MobSF project.
 MobSF and Django settings
 """
 
-import imp
 import logging
 import os
 from decouple import config
@@ -14,6 +13,7 @@ from mobsf.MobSF.init import (
     first_run,
     get_mobsf_home,
     get_mobsf_version,
+    load_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,8 @@ DB_DIR = os.path.join(MobSF_HOME, 'db.sqlite3')
 SIGNATURE_DIR = os.path.join(MobSF_HOME, 'signatures/')
 # Tools Directory
 TOOLS_DIR = os.path.join(BASE_DIR, 'DynamicAnalyzer/tools/')
+# Downloaded Tools Directory
+DOWNLOADED_TOOLS_DIR = os.path.join(MobSF_HOME, 'tools/')
 # Secret File
 SECRET_FILE = os.path.join(MobSF_HOME, 'secret')
 
@@ -48,7 +50,7 @@ SECRET_FILE = os.path.join(MobSF_HOME, 'secret')
 try:
     if USE_HOME:
         USER_CONFIG = os.path.join(MobSF_HOME, 'config.py')
-        sett = imp.load_source('user_settings', USER_CONFIG)
+        sett = load_source('user_settings', USER_CONFIG)
         locals().update(  # lgtm [py/modification-of-locals]
             {k: v for k, v in list(sett.__dict__.items())
                 if not k.startswith('__')})
@@ -87,6 +89,7 @@ APK_MIME = [
     'application/x-zip-compressed',
     'binary/octet-stream',
     'application/java-archive',
+    'application/x-authorware-bin',
 ]
 IPA_MIME = [
     'application/iphone',
@@ -108,7 +111,13 @@ APPX_MIME = [
     'application/vns.ms-appx',
     'application/x-zip-compressed',
 ]
-
+# Supported File Extensions
+ANDROID_EXTS = (
+    'apk', 'xapk', 'apks', 'zip',
+    'aab', 'so', 'jar', 'aar',
+)
+IOS_EXTS = ('ipa', 'dylib', 'a')
+WINDOWS_EXTS = ('appx',)
 # REST API only mode
 # Set MOBSF_API_ONLY to 1 to enable REST API only mode
 # In this mode, web UI related urls are disabled.
@@ -137,34 +146,32 @@ APKPLZ = 'https://apkplz.net/download-app/'
 
 # Database
 # https://docs.djangoproject.com/en/dev/ref/settings/#databases
-# Sqlite3 support
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': DB_DIR,
-    },
-}
-# End Sqlite3 support
-
-# Postgres DB - Install psycopg2
-"""
-DATABASES = {
-    'default': {
+if (os.environ.get('POSTGRES_USER')
+        and os.environ.get('POSTGRES_PASSWORD')
+        and os.environ.get('POSTGRES_HOST')):
+    # Postgres support
+    default = {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': 'mobsf',
+        'NAME': os.getenv('POSTGRES_DB', 'mobsf'),
         'USER': os.environ['POSTGRES_USER'],
         'PASSWORD': os.environ['POSTGRES_PASSWORD'],
         'HOST': os.environ['POSTGRES_HOST'],
-        'PORT': 5432,
+        'PORT': int(os.getenv('POSTGRES_PORT', 5432)),
     }
+else:
+    # Sqlite3 support
+    default = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': DB_DIR,
+    }
+DATABASES = {
+    'default': default,
 }
-# End Postgres support
-"""
 # ===============================================
 DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
-DEBUG = True
+DEBUG = bool(os.getenv('MOBSF_DEBUG', '0') == '1')
 DJANGO_LOG_LEVEL = DEBUG
+TEMPLATE_DEBUG = DEBUG
 ALLOWED_HOSTS = ['127.0.0.1', 'mobsf', '*']
 # Application definition
 INSTALLED_APPS = (
@@ -188,10 +195,14 @@ MIDDLEWARE_CLASSES = (
     'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django_ratelimit.middleware.RatelimitMiddleware',
 )
 MIDDLEWARE = (
     'mobsf.MobSF.views.api.api_middleware.RestApiAuthMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+
 )
 ROOT_URLCONF = 'mobsf.MobSF.urls'
 WSGI_APPLICATION = 'mobsf.MobSF.wsgi.application'
@@ -210,7 +221,13 @@ TEMPLATES = [
             ],
         'OPTIONS':
             {
-                'debug': True,
+                'debug': TEMPLATE_DEBUG,
+                'context_processors': [
+                    'django.template.context_processors.debug',
+                    'django.template.context_processors.request',
+                    'django.contrib.auth.context_processors.auth',
+                    'django.contrib.messages.context_processors.messages',
+                ],
             },
     },
 ]
@@ -221,6 +238,29 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 # 256MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 268435456
+LOGIN_URL = 'login'
+LOGOUT_REDIRECT_URL = '/'
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': ('django.contrib.auth.password_validation.'
+                 'UserAttributeSimilarityValidator'),
+    },
+    {
+        'NAME': ('django.contrib.auth.password_validation.'
+                 'MinimumLengthValidator'),
+        'OPTIONS': {
+            'min_length': 6,
+        },
+    },
+    {
+        'NAME': ('django.contrib.auth.password_validation.'
+                 'CommonPasswordValidator'),
+    },
+    {
+        'NAME': ('django.contrib.auth.password_validation.'
+                 'NumericPasswordValidator'),
+    },
+]
 # Better logging
 LOGGING = {
     'version': 1,
@@ -291,11 +331,31 @@ LOGGING = {
         },
     },
 }
-JADX_TIMEOUT = int(os.getenv('MOBSF_JADX_TIMEOUT', 1800))
+JADX_TIMEOUT = int(os.getenv('MOBSF_JADX_TIMEOUT', 1000))
+SAST_TIMEOUT = int(os.getenv('MOBSF_SAST_TIMEOUT', 1000))
+BINARY_ANALYSIS_TIMEOUT = int(os.getenv('MOBSF_BINARY_ANALYSIS_TIMEOUT', 600))
+DISABLE_AUTHENTICATION = os.getenv('MOBSF_DISABLE_AUTHENTICATION')
+RATELIMIT = os.getenv('MOBSF_RATELIMIT', '7/m')
+USE_X_FORWARDED_HOST = bool(
+    os.getenv('MOBSF_USE_X_FORWARDED_HOST', '1') == '1')
+USE_X_FORWARDED_PORT = bool(
+    os.getenv('MOBSF_USE_X_FORWARDED_PORT', '1') == '1')
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # ===========================
 # ENTERPRISE FEATURE REQUESTS
 # ===========================
 EFR_01 = os.getenv('EFR_01', '0')
+# SAML SSO
+# IdP Configuration
+IDP_METADATA_URL = os.getenv('MOBSF_IDP_METADATA_URL')
+IDP_ENTITY_ID = os.getenv('MOBSF_IDP_ENTITY_ID')
+IDP_SSO_URL = os.getenv('MOBSF_IDP_SSO_URL')
+IDP_X509CERT = os.getenv('MOBSF_IDP_X509CERT')
+IDP_IS_ADFS = os.getenv('MOBSF_IDP_IS_ADFS', '0')
+# SP Configuration
+SP_HOST = os.getenv('MOBSF_SP_HOST')
+SP_ALLOW_PASSWORD = os.getenv('MOBSF_SP_ALLOW_PASSWORD', '0')
+# ===================
 # USER CONFIGURATION
 # ===================
 if CONFIG_HOME:
@@ -370,6 +430,7 @@ else:
     """
 
     # Android 3P Tools
+    BUNDLE_TOOL = os.getenv('MOBSF_BUNDLE_TOOL', '')
     JADX_BINARY = os.getenv('MOBSF_JADX_BINARY', '')
     BACKSMALI_BINARY = os.getenv('MOBSF_BACKSMALI_BINARY', '')
     VD2SVG_BINARY = os.getenv('MOBSF_VD2SVG_BINARY', '')

@@ -21,6 +21,9 @@ from mobsf.StaticAnalyzer.views.android.db_interaction import (
     get_context_from_db_entry as adb)
 from mobsf.StaticAnalyzer.views.ios.db_interaction import (
     get_context_from_db_entry as idb)
+from mobsf.MobSF.views.authentication import (
+    login_required,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,15 +123,11 @@ def common_fields(findings, data):
             })
     # Firebase
     for fb in data['firebase_urls']:
-        if fb['open']:
-            fdb = fb['url']
-            findings['high'].append({
-                'title': 'Firebase DB is exposed publicly.',
-                'description': (
-                    f'The Firebase database at {fdb} is exposed'
-                    ' to internet without any authentication'),
-                'section': 'firebase',
-            })
+        findings[fb['severity']].append({
+            'title': fb['title'],
+            'description': fb['description'],
+            'section': 'firebase',
+        })
     # Trackers
     if 'trackers' in data['trackers']:
         findings['total_trackers'] = data['trackers']['total_trackers']
@@ -347,6 +346,7 @@ def get_ios_dashboard(context, from_ctx=False):
     return findings
 
 
+@login_required
 def appsec_dashboard(request, checksum, api=False):
     """Provide data for appsec dashboard."""
     try:
